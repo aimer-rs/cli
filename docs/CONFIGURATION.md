@@ -132,3 +132,45 @@ between two marker comments, and rebuilds it from `Aimer.toml` on every assemble
   commented out earlier stays a comment, so you can restore it by hand.
 - A file that does not change is not rewritten, and a missing `Info.plist` or manifest is skipped with a warning.
 - A start marker without its end marker (or the reverse) stops the sync with an error instead of guessing.
+
+## Documents
+
+`[[documents]]` declares the kinds of file the app opens. The system offers an app only the files it says it can open,
+so without this a file dropped on the app's icon, or chosen in "Open With", is refused. Each entry is one kind of file:
+
+```toml
+[[documents]]
+name = "Rust source file"      # what the system calls it
+extensions = ["rs"]            # without the dot
+role = "editor"                # "editor" (default) or "viewer"
+# utis = ["public.source-code"]   # Apple type identifiers, optional on macOS
+# mime_types = ["text/x-rust"]    # for Android, which names kinds of file by MIME type
+```
+
+An entry needs a `name` and at least one of `extensions`, `utis` and `mime_types`; an extension with a dot, a space or a
+path in it stops the assemble with an error.
+
+| Target  | Written as                                                                          | Needs                          |
+|---------|-------------------------------------------------------------------------------------|--------------------------------|
+| macOS   | `CFBundleDocumentTypes` in `Info.plist`, offered with rank `Alternate`              | `extensions` or `utis`         |
+| iOS     | `CFBundleDocumentTypes` in `Info.plist`; iOS names a kind of file by type only      | `utis`                         |
+| Android | `VIEW` intent filters on the activity (one for `mime_types`, one for `extensions`)  | `mime_types` or `extensions`   |
+
+An entry a platform cannot declare is skipped there with a note, and still written everywhere else. iOS copies the
+file into the app's `Documents/Inbox` before opening it, so the app receives a real path; on Android a file another app
+shares as a `content:` URI is copied into the app's cache first, under its own name, for the same reason (a later file
+with the same name replaces it).
+
+**Existing iOS projects need one more key.** iOS hands a URL to the app's scene, not to an application delegate, so the
+generated `main.swift` carries an `AimerSceneDelegate` that forwards it, and `Info.plist` has to name it. New projects
+get `UISceneDelegateClassName` = `AimerSceneDelegate` under `UIApplicationSceneManifest` ›
+`UISceneConfigurations` › `Default Configuration`; `aimer migrate ios` leaves an edited `Info.plist` alone, so add the
+key by hand (or run `aimer migrate ios --force` if you have not customised the file). Without it files and links
+still open the app but never reach it.
+
+Each platform's entry sits in its own marked block, `aimer:documents:start` to `aimer:documents:end`, kept the way the
+permissions block is (see above). If your `Info.plist` already declares `CFBundleDocumentTypes` yourself, `aimer` leaves
+it alone and prints a note instead of writing a duplicate key.
+
+The app receives the files through `aimer_events::file_open`: register a handler before the app runs to be offered each
+one, and claim any that arrived earlier (the file that *launched* the app) when the first screen is built.

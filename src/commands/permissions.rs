@@ -12,6 +12,8 @@
 
 mod android;
 mod block;
+mod documents;
+mod documents_android;
 mod plist;
 mod scan;
 #[cfg(test)]
@@ -36,6 +38,97 @@ pub(crate) fn sync_macos(pkg_name: &str, reporter: &dyn Reporter) -> anyhow::Res
     let entries = manifest.permissions.apple_entries(&extra);
     let path = format!("builds/macos/{pkg_name}/Info.plist");
     sync_plist_file(Path::new(&path), &entries, reporter)
+}
+
+/// Sync `[[documents]]` into the macOS `Info.plist`: the kinds of file the app
+/// opens, which is what makes the system offer it a file dropped on its icon.
+pub(crate) fn sync_documents_macos(pkg_name: &str, reporter: &dyn Reporter) -> anyhow::Result<()> {
+    let Some(manifest) = AimerManifest::load()? else {
+        return Ok(());
+    };
+    let path = format!("builds/macos/{pkg_name}/Info.plist");
+    sync_documents_file(Path::new(&path), &manifest.documents, documents::Apple::Macos, reporter)
+}
+
+/// Sync `[[documents]]` into the iOS `Info.plist`. iOS identifies a kind of file
+/// by type identifier only, so an entry with no `utis` is skipped with a note.
+pub(crate) fn sync_documents_ios(pkg_name: &str, reporter: &dyn Reporter) -> anyhow::Result<()> {
+    let Some(manifest) = AimerManifest::load()? else {
+        return Ok(());
+    };
+    let path = format!("builds/ios/{pkg_name}/Info.plist");
+    sync_documents_file(Path::new(&path), &manifest.documents, documents::Apple::Ios, reporter)
+}
+
+fn sync_documents_file(
+    path: &Path,
+    documents: &[crate::config::DocumentMeta],
+    platform: documents::Apple,
+    reporter: &dyn Reporter,
+) -> anyhow::Result<()> {
+    let Some(text) = read(path, !documents.is_empty(), reporter)? else {
+        return Ok(());
+    };
+    let out = documents::sync(&text, documents, platform)
+        .with_context(|| format!("syncing {}", path.display()))?;
+
+    let shown = path.display();
+    for name in &out.skipped {
+        reporter.note(format!(
+            "Documents: [[documents]] \"{name}\" is not written into {shown}: iOS names a kind of file by type identifier, so give it `utis`"
+        ));
+    }
+    if out.kept_own {
+        reporter.note(format!(
+            "Documents: {shown} already declares CFBundleDocumentTypes, so [[documents]] was not written; remove that entry to let Aimer.toml declare it"
+        ));
+    }
+    if out.wrote {
+        reporter.note(format!(
+            "Documents: wrote {} into {shown}",
+            documents
+                .iter()
+                .filter(|d| !out.skipped.contains(&d.name))
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if documents.is_empty() && out.removed_block {
+        reporter.note(format!(
+            "Documents: removed the generated block from {shown}"
+        ));
+    }
+    write_if_changed(path, &text, &out.text)
+}
+
+/// Sync `[[documents]]` into the Android manifest as intent filters on the
+/// activity, which is what makes Android offer the app a file.
+pub(crate) fn sync_documents_android(reporter: &dyn Reporter) -> anyhow::Result<()> {
+    let Some(manifest) = AimerManifest::load()? else {
+        return Ok(());
+    };
+    let path = Path::new(ANDROID_MANIFEST);
+    let documents = &manifest.documents;
+    let Some(text) = read(path, !documents.is_empty(), reporter)? else {
+        return Ok(());
+    };
+    let out = documents_android::sync(&text, documents)
+        .with_context(|| format!("syncing {}", path.display()))?;
+
+    let shown = path.display();
+    for name in &out.skipped {
+        reporter.note(format!(
+            "Documents: [[documents]] \"{name}\" is not written into {shown}: Android needs `mime_types` or `extensions`"
+        ));
+    }
+    if out.wrote {
+        reporter.note(format!("Documents: wrote intent filters into {shown}"));
+    }
+    if documents.is_empty() && out.removed_block {
+        reporter.note(format!("Documents: removed the generated block from {shown}"));
+    }
+    write_if_changed(path, &text, &out.text)
 }
 
 /// Sync `[permissions]` and `[ios.permissions]` into the iOS `Info.plist`.

@@ -166,6 +166,7 @@ impl RustAnalyzerBridge {
                             progress.report(message).await;
                         }
                         *session = Some(result.context("embedded Rust analysis task failed")?.context("loading embedded rust-analyzer")?);
+                        self.started.store(true, Ordering::Relaxed);
                         break;
                     }
                     message = receiver.recv() => if let Some(message) = message {

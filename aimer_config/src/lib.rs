@@ -5,11 +5,13 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 mod android;
+mod documents;
 mod ios;
 mod macos;
 mod permissions;
 
 pub use android::{AndroidMeta, AndroidSigningMeta};
+pub use documents::{DocumentMeta, DocumentRole};
 pub use ios::{IosMeta, IosSigningMeta};
 pub use macos::{MacosMeta, MacosSigningMeta};
 pub use permissions::{AndroidPermissionsMeta, AndroidUse, Permissions};
@@ -244,6 +246,10 @@ pub struct AimerManifest {
     /// `Info.plist` keys and Android permissions by `aimer assemble`.
     #[serde(default, skip_serializing_if = "Permissions::is_empty")]
     pub permissions: Permissions,
+    /// The `[[documents]]` array: the kinds of file the app opens, declared in
+    /// `Info.plist` and the Android manifest by `aimer assemble`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<DocumentMeta>,
     /// The `[macos]` table: settings that only apply to the macOS target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub macos: Option<MacosMeta>,
@@ -289,6 +295,7 @@ impl AimerManifest {
             assets: BTreeMap::new(),
             fonts: BTreeMap::new(),
             permissions: Permissions::default(),
+            documents: Vec::new(),
             macos: None,
             ios: None,
             android: None,

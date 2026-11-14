@@ -29,7 +29,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow, bail};
@@ -120,6 +120,9 @@ pub struct RustAnalyzerBridge {
     project_root: Arc<std::sync::RwLock<PathBuf>>,
     config: aimer_config::RustAnalyzerConfig,
     session: Arc<Mutex<Option<EmbeddedRustAnalyzer>>>,
+    /// Set once the engine has finished loading, and kept for as long as this
+    /// bridge lives, so a reload after a manifest edit does not read as a stop.
+    started: Arc<AtomicBool>,
     /// Code actions keyed by ID, with the owning client alongside the action.
     actions: Arc<Mutex<HashMap<String, (String, Value)>>>,
     previews: Arc<Mutex<HashMap<String, EditPreview>>>,

@@ -30,8 +30,8 @@ pub(super) struct PlistSync {
 }
 
 /// A `<key>` with its value, as found at the top level of the plist.
-struct Entry {
-    key: String,
+pub(super) struct Entry {
+    pub(super) key: String,
     start: usize,
     end: usize,
     /// The text of a `<string>` value; `None` for any other type.
@@ -101,19 +101,29 @@ pub(super) fn sync(text: &str, entries: &[(String, String)]) -> anyhow::Result<P
 
 /// Put the generated block before the `</dict>` at `dict_close`.
 fn insert_block(text: &mut String, dict_close: usize, lines: &[String]) {
+    insert_marked_block(text, dict_close, block::PERMISSIONS, lines);
+}
+
+/// [`insert_block`] for any generated block.
+pub(super) fn insert_marked_block(
+    text: &mut String,
+    dict_close: usize,
+    marker: block::Marker,
+    lines: &[String],
+) {
     let line_start = text[..dict_close].rfind('\n').map_or(0, |i| i + 1);
     let leading = &text[line_start..dict_close];
     if leading.trim().is_empty() {
         let indent = format!("{leading}    ");
-        text.insert_str(line_start, &block::render(&indent, lines));
+        text.insert_str(line_start, &marker.render(&indent, lines));
     } else {
-        let block = format!("\n{}", block::render("    ", lines));
+        let block = format!("\n{}", marker.render("    ", lines));
         text.insert_str(dict_close, &block);
     }
 }
 
 /// The entries of the top-level `<dict>` and the offset of its closing tag.
-fn top_level(text: &str) -> anyhow::Result<(Vec<Entry>, usize)> {
+pub(super) fn top_level(text: &str) -> anyhow::Result<(Vec<Entry>, usize)> {
     let tags = scan::tags(text);
     let mut entries = Vec::new();
     let mut depth = 0usize;
@@ -186,7 +196,7 @@ fn value_end(tags: &[Tag], at: usize) -> anyhow::Result<(usize, usize)> {
     }
 }
 
-fn escape(text: &str) -> String {
+pub(super) fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

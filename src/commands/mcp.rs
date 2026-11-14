@@ -17,6 +17,7 @@ mod session_helpers;
 mod session_link;
 mod session_tools;
 mod symbol_metadata;
+mod tool_listing;
 mod tool_result;
 mod trim;
 
@@ -30,11 +31,11 @@ use rust_response::*;
 use session_helpers::*;
 use session_link::{LinkMode, SessionLink};
 use symbol_metadata::symbol_metadata;
+use tool_listing::{ToolAvailability, offered_tools};
 use tool_result::*;
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
@@ -427,7 +428,7 @@ impl AimerMcpServer {
     }
 }
 
-const INSTRUCTIONS: &str = "Call these tools through your MCP client's native tool interface. Do not start `aimer mcp` yourself or write JSON-RPC or scripts to talk to it; if the tools are not available in your tool list, say so instead. LSP calls may report indexing progress; wait for the result. Readiness failures are explicit. The tools that drive the running app (clicks, keys, typing, scrolling, touch, screenshots) are listed only while an app is connected to the session; the tool list changes when one connects or goes away. Session tools act on the session this connection controls: with exactly one live session for the workspace it is attached automatically, even when it starts after this server; otherwise call `list_sessions` and `attach_session`.";
+const INSTRUCTIONS: &str = "Call these tools through your MCP client's native tool interface. Do not start `aimer mcp` yourself or write JSON-RPC or scripts to talk to it; if the tools are not available in your tool list, say so instead. LSP calls may report indexing progress; wait for the result. Readiness failures are explicit. The tools that drive the running app (clicks, keys, typing, scrolling, touch, screenshots) are listed only while an app is connected to the session, and the rust-analyzer tools (navigation, hover, diagnostics, rename, code actions, formatting) are listed only after `start_lsp` has loaded the engine; the tool list changes when either happens. Session tools act on the session this connection controls: with exactly one live session for the workspace it is attached automatically, even when it starts after this server; otherwise call `list_sessions` and `attach_session`.";
 
 /// How often the server looks at whether an app is connected, to tell the client
 /// when its tool list has changed.
@@ -439,7 +440,8 @@ impl rmcp::ServerHandler for AimerMcpServer {
         rmcp::model::ServerConfig::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
-                // The app tools come and go with the app.
+                // The app tools come and go with the app, and the language tools
+                // appear once the engine has started.
                 .enable_tool_list_changed()
                 .build(),
         )
@@ -455,7 +457,7 @@ impl rmcp::ServerHandler for AimerMcpServer {
         let supports_cache_hints = context
             .protocol_version()
             .is_some_and(|version| version >= rmcp::model::ProtocolVersion::V_2026_07_28);
-        let tools = offered_tools(Self::tool_router().list_all(), self.app_connected().await);
+        let tools = offered_tools(Self::tool_router().list_all(), self.availability().await);
         Ok(rmcp::model::ListToolsResult {
             result_type: Some(rmcp::model::ResultType::COMPLETE),
             tools,
@@ -472,13 +474,13 @@ impl rmcp::ServerHandler for AimerMcpServer {
         let server = self.clone();
         let peer = context.peer.clone();
         tokio::spawn(async move {
-            let mut offered = server.app_connected().await;
+            let mut offered = server.availability().await;
             loop {
                 tokio::time::sleep(APP_WATCH_INTERVAL).await;
                 if peer.is_transport_closed() {
                     break;
                 }
-                let now = server.app_connected().await;
+                let now = server.availability().await;
                 if now != offered {
                     offered = now;
                     // The client is gone when this fails: stop watching.
@@ -517,28 +519,15 @@ impl rmcp::ServerHandler for AimerMcpServer {
     }
 }
 
-/// The names of the tools that act on the running app, which are exactly the
-/// input tools.
-fn app_tool_names() -> &'static HashSet<String> {
-    static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
-    NAMES.get_or_init(|| {
-        AimerMcpServer::input_tool_router()
-            .list_all()
-            .into_iter()
-            .map(|tool| tool.name.to_string())
-            .collect()
-    })
-}
-
-/// `tools` without the ones that drive the app, unless one is connected.
-fn offered_tools(mut tools: Vec<rmcp::model::Tool>, app_connected: bool) -> Vec<rmcp::model::Tool> {
-    if !app_connected {
-        tools.retain(|tool| !app_tool_names().contains(tool.name.as_ref()));
-    }
-    tools
-}
-
 impl AimerMcpServer {
+    /// What this connection can use now, which decides the tools it is offered.
+    async fn availability(&self) -> ToolAvailability {
+        ToolAvailability {
+            app_connected: self.app_connected().await,
+            lsp_started: self.rust_analyzer.lsp_started(),
+        }
+    }
+
     /// Whether this session is connected to a running app that takes input: the
     /// app has announced its input server, the session has reached it, and the
     /// app is still running. Attached to a session is not enough, because a

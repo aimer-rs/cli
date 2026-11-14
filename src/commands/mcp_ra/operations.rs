@@ -6,6 +6,7 @@ impl RustAnalyzerBridge {
             project_root: Arc::new(std::sync::RwLock::new(project_root)),
             config,
             session: Arc::new(Mutex::new(None)),
+            started: Arc::new(AtomicBool::new(false)),
             actions: Arc::new(Mutex::new(HashMap::new())),
             previews: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -17,6 +18,12 @@ impl RustAnalyzerBridge {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Whether the embedded engine has been started, which is what makes the language
+    /// tools worth listing. It does not wait on a load or a request in progress.
+    pub fn lsp_started(&self) -> bool {
+        self.started.load(Ordering::Relaxed)
     }
 
     /// Whether Cargo subprocesses may use the network for this MCP session.
